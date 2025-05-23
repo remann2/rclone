@@ -554,3 +554,45 @@ func rcQueueSetExpiry(ctx context.Context, in rc.Params) (out rc.Params, err err
 	err = vfs.cache.QueueSetExpiry(writeback.Handle(id), refTime, time.Duration(float64(time.Second)*expiry))
 	return nil, err
 }
+
+func init() {
+	rc.Add(rc.Call{
+		Path:  "vfs/persist-cache-save",
+		Title: "Save the persistent directory cache.",
+		Help: `
+This manually saves the directory cache to disk if persistent caching is enabled.
+
+The cache is normally saved automatically when the VFS is shut down, but this
+command allows you to save it at any time while the mount is running.
+
+This will return an error if persistent directory caching is not enabled.
+
+    rclone rc vfs/persist-cache-save
+` + getVFSHelp,
+		Fn: rcPersistCacheSave,
+	})
+}
+
+func rcPersistCacheSave(ctx context.Context, in rc.Params) (out rc.Params, err error) {
+	vfs, err := getVFS(in)
+	if err != nil {
+		return nil, err
+	}
+	
+	if !vfs.Opt.DirCachePersist {
+		return nil, rc.NewErrParamInvalid(errors.New("persistent directory caching is not enabled"))
+	}
+	
+	if vfs.persistentDirCache == nil {
+		return nil, rc.NewErrParamInvalid(errors.New("persistent directory cache not initialized"))
+	}
+	
+	err = vfs.persistentDirCache.SaveCache()
+	if err != nil {
+		return nil, fmt.Errorf("failed to save persistent directory cache: %w", err)
+	}
+	
+	return rc.Params{
+		"result": "cache saved successfully",
+	}, nil
+}

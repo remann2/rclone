@@ -175,16 +175,17 @@ var (
 
 // VFS represents the top level filing system
 type VFS struct {
-	f           fs.Fs
-	root        *Dir
-	Opt         vfscommon.Options
-	cache       *vfscache.Cache
-	cancelCache context.CancelFunc
-	usageMu     sync.Mutex
-	usageTime   time.Time
-	usage       *fs.Usage
-	pollChan    chan time.Duration
-	inUse       atomic.Int32 // count of number of opens
+	f              fs.Fs
+	root           *Dir
+	Opt            vfscommon.Options
+	cache          *vfscache.Cache
+	cancelCache    context.CancelFunc
+	usageMu        sync.Mutex
+	usageTime      time.Time
+	usage          *fs.Usage
+	pollChan       chan time.Duration
+	inUse          atomic.Int32 // count of number of opens
+	persistentDirCache *PersistentDirCache // for persistent directory caching
 }
 
 // Keep track of active VFS keyed on fs.ConfigString(f)
@@ -261,6 +262,20 @@ func New(f fs.Fs, opt *vfscommon.Options) *VFS {
 
 	// This can take some time so do it after the Pin
 	vfs.SetCacheMode(vfs.Opt.CacheMode)
+
+	// Initialize persistent directory cache
+	if vfs.Opt.DirCachePersist {
+		vfs.persistentDirCache = NewPersistentDirCache(vfs)
+		if err := vfs.persistentDirCache.Initialize(); err != nil {
+			fs.Errorf(vfs.f, "Failed to initialize persistent directory cache: %v", err)
+			// Continue without persistent cache
+			vfs.persistentDirCache = nil
+		} else {
+			fs.Infof(vfs.f, "Persistent directory cache initialized")
+		}
+		// Note: Cache loading now happens on-demand in _readDir()
+		// No need for bulk loading at startup
+	}
 
 	return vfs
 }
@@ -365,6 +380,16 @@ func (vfs *VFS) Shutdown() {
 		}
 	}
 	activeMu.Unlock()
+
+	// Save persistent directory cache if enabled
+	if vfs.persistentDirCache != nil {
+		if err := vfs.persistentDirCache.SaveCache(); err != nil {
+			fs.Errorf(vfs.f, "Failed to save persistent directory cache: %v", err)
+		}
+		if err := vfs.persistentDirCache.Close(); err != nil {
+			fs.Errorf(vfs.f, "Failed to close persistent directory cache: %v", err)
+		}
+	}
 
 	vfs.shutdownCache()
 

@@ -251,6 +251,15 @@ func (d *Dir) ForgetAll() (hasVirtual bool) {
 		d.read = time.Time{}
 		d.items = make(map[string]Node)
 		d.cleanupTimer.Stop()
+		
+		// Invalidate persistent cache if enabled
+		if d.vfs.persistentDirCache != nil {
+			go func() {
+				if err := d.vfs.persistentDirCache.InvalidateDirectory(d.path); err != nil {
+					fs.Debugf(d.path, "Failed to invalidate persistent cache: %v", err)
+				}
+			}()
+		}
 	} else {
 		d.cleanupTimer.Reset(time.Duration(d.vfs.Opt.DirCacheTime * 2))
 	}
@@ -539,12 +548,31 @@ func (d *Dir) _readDir() error {
 	} else {
 		return nil
 	}
-	entries, err := list.DirSorted(context.TODO(), d.f, false, d.path)
-	if err == fs.ErrorDirNotFound {
-		// We treat directory not found as empty because we
-		// create directories on the fly
-	} else if err != nil {
-		return err
+	
+	
+	// Try loading from cache first
+	var entries fs.DirEntries
+	var fromCache bool
+	var err error
+	
+	if d.vfs.persistentDirCache != nil && d.read.IsZero() {
+		entries, fromCache = d.vfs.persistentDirCache.LoadDirEntries(d.path)
+	}
+	
+	// If not in cache or cache is disabled, fetch from remote
+	if !fromCache {
+		entries, err = list.DirSorted(context.TODO(), d.f, false, d.path)
+		if err == fs.ErrorDirNotFound {
+			// We treat directory not found as empty because we
+			// create directories on the fly
+		} else if err != nil {
+			return err
+		}
+		
+		// Save to cache for next time
+		if d.vfs.persistentDirCache != nil && len(entries) > 0 {
+			d.vfs.persistentDirCache.SaveDirEntries(d.path, entries)
+		}
 	}
 
 	if d.vfs.Opt.BlockNormDupes { // do this only if requested, as it will have a performance hit
@@ -583,6 +611,15 @@ func (d *Dir) _readDir() error {
 
 	d.read = time.Now()
 	d.cleanupTimer.Reset(time.Duration(d.vfs.Opt.DirCacheTime * 2))
+
+	// Update persistent cache if enabled
+	if d.vfs.persistentDirCache != nil {
+		go func() {
+			if err := d.vfs.persistentDirCache.UpdateDirectory(d); err != nil {
+				fs.Debugf(d.path, "Failed to update persistent cache: %v", err)
+			}
+		}()
+	}
 
 	return nil
 }
@@ -732,6 +769,8 @@ func (mv manageVirtuals) end(d *Dir) {
 // set the last read time - must be called with the lock held
 func (d *Dir) _readDirFromEntries(entries fs.DirEntries, dirTree dirtree.DirTree, when time.Time) error {
 	var err error
+	
+	
 	mv := d._newManageVirtuals()
 	for _, entry := range entries {
 		name := path.Base(entry.Remote())
@@ -808,6 +847,16 @@ func (d *Dir) readDirTree() error {
 	fs.Debugf(d.path, "Reading directory tree done in %s", time.Since(when))
 	d.read = when
 	d.cleanupTimer.Reset(time.Duration(d.vfs.Opt.DirCacheTime * 2))
+	
+	// Update persistent cache if enabled
+	if d.vfs.persistentDirCache != nil {
+		go func() {
+			if err := d.vfs.persistentDirCache.UpdateDirectory(d); err != nil {
+				fs.Debugf(d.path, "Failed to update persistent cache: %v", err)
+			}
+		}()
+	}
+	
 	return nil
 }
 

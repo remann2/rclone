@@ -170,6 +170,16 @@ var OptionsInfo = fs.Options{{
 	Default: "",
 	Help:    "Set the extension to read metadata from.",
 	Groups:  "VFS",
+}, {
+	Name:    "vfs_dir_cache_persist",
+	Default: false,
+	Help:    "Enable persistent directory cache across mount restarts",
+	Groups:  "VFS",
+}, {
+	Name:    "vfs_dir_cache_file",
+	Default: "",
+	Help:    "File to store persistent directory cache (empty means auto-generate in cache dir)",
+	Groups:  "VFS",
 }}
 
 func init() {
@@ -210,6 +220,8 @@ type Options struct {
 	FastFingerprint    bool          `config:"vfs_fast_fingerprint"` // if set use fast fingerprints
 	DiskSpaceTotalSize fs.SizeSuffix `config:"vfs_disk_space_total_size"`
 	MetadataExtension  string        `config:"vfs_metadata_extension"` // if set respond to files with this extension with metadata
+	DirCachePersist    bool          `config:"vfs_dir_cache_persist"`  // if set persist directory cache across restarts
+	DirCacheFile       string        `config:"vfs_dir_cache_file"`     // file to store persistent directory cache
 }
 
 // Opt is the default options modified by the environment variables and command line flags
